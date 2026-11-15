@@ -1,1 +1,44 @@
-
+name: Build ESP32 bin
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Install core and libs
+        run: |
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32@2.0.17 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli lib install "Adafruit SSD1306" "Adafruit SH110X" "Adafruit GFX Library" "Adafruit BusIO"
+      - name: Build both OLED variants
+        run: |
+          pip install esptool
+          BOOTAPP=$(find ~/.arduino15 -name boot_app0.bin | head -1)
+          for V in SSD1306 SH1106; do
+            rm -rf sk out_$V
+            mkdir -p sk/EngineSim
+            cp EngineSim.ino sk/EngineSim/EngineSim.ino
+            if [ "$V" = "SH1106" ]; then
+              sed -i 's/#define OLED_SH1106 0/#define OLED_SH1106 1/' sk/EngineSim/EngineSim.ino
+            fi
+            arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app --output-dir out_$V sk/EngineSim
+            python3 -m esptool --chip esp32 merge_bin -o EngineSim_$V.bin \
+              --flash_mode dio --flash_freq 80m --flash_size 4MB \
+              0x1000 out_$V/EngineSim.ino.bootloader.bin \
+              0x8000 out_$V/EngineSim.ino.partitions.bin \
+              0xe000 "$BOOTAPP" \
+              0x10000 out_$V/EngineSim.ino.bin
+          done
+          ls -la EngineSim_*.bin
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-bin
+          name: EngineSim firmware (flash at 0x0)
+          files: |
+            EngineSim_SSD1306.bin
+            EngineSim_SH1106.bin

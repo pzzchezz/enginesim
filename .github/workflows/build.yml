@@ -20,7 +20,18 @@ jobs:
           mkdir EngineSim
           cp EngineSim.ino EngineSim/EngineSim.ino
           arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app --output-dir out EngineSim
-          cp out/EngineSim.ino.merged.bin EngineSim_FULL.bin
+          ls -la out
+      - name: Merge into one bin
+        run: |
+          pip install esptool
+          BOOTAPP=$(find ~/.arduino15 -name boot_app0.bin | head -1)
+          python3 -m esptool --chip esp32 merge_bin -o EngineSim_FULL.bin \
+            --flash_mode dio --flash_freq 80m --flash_size 4MB \
+            0x1000 out/EngineSim.ino.bootloader.bin \
+            0x8000 out/EngineSim.ino.partitions.bin \
+            0xe000 "$BOOTAPP" \
+            0x10000 out/EngineSim.ino.bin
+          ls -la EngineSim_FULL.bin
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: latest-bin

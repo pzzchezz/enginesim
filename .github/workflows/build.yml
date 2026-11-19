@@ -1,44 +1,81 @@
-name: Build ESP32 bin
+# วางไฟล์นี้ที่ .github/workflows/build.yml ใน repo
+# จะ build esp32_selftest.ino เป็น .bin ทุกครั้งที่ push (หรือกด Run workflow เอง)
+# แล้วสร้าง Release ใหม่ในหน้า Releases พร้อมแนบไฟล์ .bin ให้อัตโนมัติ
+name: Build ESP32 firmware
+
 on:
   push:
+  pull_request:
   workflow_dispatch:
+
+# ต้องมีสิทธิ์เขียน เพื่อให้สร้าง Release ได้
 permissions:
   contents: write
+
+env:
+  SKETCH_NAME: esp32_selftest
+  FQBN: esp32:esp32:esp32
+  # Huge APP = โค้ดใหญ่ได้ ~3MB (สเก็ตช์ใช้ BLE + Wi-Fi พร้อมกัน ใหญ่เกินพาร์ทิชันปกติ) ไม่มี OTA
+  BOARD_OPTIONS: PartitionScheme=huge_app
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: arduino/setup-arduino-cli@v2
-      - name: Install core and libs
+
+      - name: Setup arduino-cli
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 core
         run: |
-          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
-          arduino-cli core install esp32:esp32@2.0.17 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
-          arduino-cli lib install "Adafruit SSD1306" "Adafruit SH110X" "Adafruit GFX Library" "Adafruit BusIO"
-      - name: Build both OLED variants
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+
+      - name: Stage sketch (หา .ino ใน repo แล้วจัดโฟลเดอร์ให้ชื่อตรงกัน)
         run: |
-          pip install esptool
-          BOOTAPP=$(find ~/.arduino15 -name boot_app0.bin | head -1)
-          for V in SSD1306 SH1106; do
-            rm -rf sk out_$V
-            mkdir -p sk/EngineSim
-            cp EngineSim.ino sk/EngineSim/EngineSim.ino
-            if [ "$V" = "SH1106" ]; then
-              sed -i 's/#define OLED_SH1106 0/#define OLED_SH1106 1/' sk/EngineSim/EngineSim.ino
-            fi
-            arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app --output-dir out_$V sk/EngineSim
-            python3 -m esptool --chip esp32 merge_bin -o EngineSim_$V.bin \
-              --flash_mode dio --flash_freq 80m --flash_size 4MB \
-              0x1000 out_$V/EngineSim.ino.bootloader.bin \
-              0x8000 out_$V/EngineSim.ino.partitions.bin \
-              0xe000 "$BOOTAPP" \
-              0x10000 out_$V/EngineSim.ino.bin
-          done
-          ls -la EngineSim_*.bin
-      - uses: softprops/action-gh-release@v2
+          SRC=$(find . -name "${SKETCH_NAME}.ino" -not -path "./build/*" | head -n 1)
+          if [ -z "$SRC" ]; then echo "ไม่พบ ${SKETCH_NAME}.ino ใน repo"; exit 1; fi
+          echo "พบ: $SRC"
+          mkdir -p build/sketch/${SKETCH_NAME}
+          cp "$SRC" build/sketch/${SKETCH_NAME}/${SKETCH_NAME}.ino
+
+      - name: Compile
+        run: |
+          arduino-cli compile \
+            --fqbn "$FQBN" \
+            --board-options "$BOARD_OPTIONS" \
+            --export-binaries \
+            --output-dir build/out \
+            build/sketch/${SKETCH_NAME}
+          ls -la build/out
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: latest-bin
-          name: EngineSim firmware (flash at 0x0)
+          name: ${{ env.SKETCH_NAME }}-firmware
+          path: |
+            build/out/*.merged.bin
+            build/out/*.ino.bin
+            build/out/*.bootloader.bin
+            build/out/*.partitions.bin
+
+      - name: Publish release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: ESP32 self-test firmware build ${{ github.run_number }}
+          body: |
+            ไฟล์เฟิร์มแวร์ esp32_selftest (commit ${{ github.sha }})
+            - `*.merged.bin` แฟลชที่ offset 0x0 (ง่ายสุด)
+            - `*.ino.bin` แฟลชที่ 0x10000
+            หลังแฟลช เปิดหน้าเว็บตัวเช็ค ESP32 แล้วเชื่อมต่อ "ESP32-SelfTest" ผ่านบลูทูธ
           files: |
-            EngineSim_SSD1306.bin
-            EngineSim_SH1106.bin
+            build/out/*.merged.bin
+            build/out/*.ino.bin
+            build/out/*.bootloader.bin
+            build/out/*.partitions.bin

@@ -95,10 +95,51 @@ void testGPIO() {
   rep("gpio", bad == "", bad == "" ? "ผ่านทุกขา" : "ผิดปกติขา " + bad);
 }
 
+// K-line: โมดูล TX -> GPIO16 (RX2), โมดูล RX -> GPIO17 (TX2)
+#define K_RX 16
+#define K_TX 17
+
+void testKLine() {
+  pinMode(K_TX, OUTPUT);
+  pinMode(K_RX, INPUT);
+  digitalWrite(K_TX, HIGH); delay(5);
+  bool idleHigh = digitalRead(K_RX);
+  digitalWrite(K_TX, LOW); delay(5);
+  bool lowOk = !digitalRead(K_RX);
+  digitalWrite(K_TX, HIGH); delay(5);
+  bool highOk = digitalRead(K_RX);
+
+  // ส่งข้อมูลแล้วรอ echo กลับมา (K-line transceiver จะสะท้อนข้อมูลที่ส่ง)
+  Serial2.begin(10400, SERIAL_8N1, K_RX, K_TX);
+  while (Serial2.available()) Serial2.read();
+  const uint8_t pat[] = {0x55, 0xAA, 0x33, 0xC1};
+  Serial2.write(pat, 4);
+  Serial2.flush();
+  delay(60);
+  int got = 0;
+  bool match = true;
+  while (Serial2.available() && got < 4) {
+    if (Serial2.read() != pat[got]) match = false;
+    got++;
+  }
+  Serial2.end();
+  bool echo = (got == 4 && match);
+
+  bool ok = idleHigh && lowOk && highOk && echo;
+  String d;
+  if (ok) d = "ปกติ echo ตรง 4/4 ไบต์";
+  else {
+    if (!idleHigh || !highOk) d += "RX ไม่ขึ้นสูง (เช็ค EN/VCC/ตัวดึงขึ้น) ";
+    if (!lowOk) d += "RX ไม่ลงต่ำเมื่อ TX ต่ำ (เช็คสาย) ";
+    if (!echo) d += "echo " + String(got) + "/4";
+  }
+  rep("kline", ok, d);
+}
+
 void runAll() {
   sendLine("info|OK|" + String(ESP.getChipModel()) + " rev" + String(ESP.getChipRevision()) +
            " " + String(ESP.getChipCores()) + " คอร์");
-  testFlash(); testNVS(); testRAM(); testCPU(); testTemp(); testWiFi(); testGPIO();
+  testFlash(); testNVS(); testRAM(); testCPU(); testTemp(); testWiFi(); testGPIO(); testKLine();
   sendLine("DONE");
 }
 

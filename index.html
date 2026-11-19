@@ -3,12 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>ตัวเช็ค ESP32 ผ่านบลูทูธ</title>
+<title>อ่าน K-line ผ่าน USB</title>
 <style>
-:root{--bg:#f6f7f9;--card:#fff;--tx:#14181f;--mut:#667085;--bd:#e3e6eb;--ok:#12a150;--bad:#d92d20;--pen:#98a2b3;--ac:#2563eb;
+:root{--bg:#f6f7f9;--card:#fff;--tx:#14181f;--mut:#667085;--bd:#e3e6eb;--ok:#12a150;--bad:#d92d20;--ac:#2563eb;
 box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1218;--card:#181c24;--tx:#eef1f6;--mut:#98a2b3;--bd:#2a303b;--ok:#32d583;--bad:#f97066;--pen:#667085;--ac:#5b8cff}}
-:root[data-theme="dark"]{--bg:#0f1218;--card:#181c24;--tx:#eef1f6;--mut:#98a2b3;--bd:#2a303b;--ok:#32d583;--bad:#f97066;--pen:#667085;--ac:#5b8cff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1218;--card:#181c24;--tx:#eef1f6;--mut:#98a2b3;--bd:#2a303b;--ok:#32d583;--bad:#f97066;--ac:#5b8cff}}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,"Noto Sans Thai",sans-serif;padding:16px;max-width:520px;margin-inline:auto}
@@ -18,97 +17,157 @@ p.s{color:var(--mut);font-size:14px;margin:0 0 14px}
 button{font:inherit;font-weight:600;border:0;border-radius:12px;padding:13px;width:100%;background:var(--ac);color:#fff;margin-bottom:8px}
 button:disabled{opacity:.45}
 button.g{background:transparent;color:var(--ac);border:1px solid var(--bd)}
-.row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bd)}
-.row:last-child{border:0}
-.dot{width:12px;height:12px;border-radius:50%;background:var(--pen);flex:none}
-.row.ok .dot{background:var(--ok)}.row.fail .dot{background:var(--bad)}
-.row .n{flex:1;font-size:15px}.row .d{font-size:12px;color:var(--mut);display:block}
-.row .t{font-size:13px;font-weight:600;color:var(--pen)}
-.row.ok .t{color:var(--ok)}.row.fail .t{color:var(--bad)}
-#sum{font-weight:700;text-align:center;display:none}
-#sum.ok{color:var(--ok)}#sum.fail{color:var(--bad)}
+label{display:block;font-size:13px;color:var(--mut);margin:8px 0 4px}
+input{font:inherit;width:100%;padding:10px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 #st{font-size:13px;color:var(--mut);text-align:center;margin:6px 0}
+.t{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;word-break:break-all;line-height:1.55}
+.t b{color:var(--ac)}
+#log{height:240px;overflow:auto;white-space:pre-wrap}
+.tx{color:var(--ac)}.rx{color:var(--ok)}.er{color:var(--bad)}
 .note{font-size:12px;color:var(--mut);line-height:1.5}
 </style>
 </head>
 <body>
-<h1>ตัวเช็ค ESP32</h1>
-<p class="s">ตรวจว่าบอร์ดพังไหม พังตรงส่วนไหน ผ่านบลูทูธ</p>
+<h1>อ่าน K-line ผ่าน USB</h1>
+<p class="s">ต่อสาย USB-OTG + ตัวแปลง FTDI เข้ามือถือ (อ่านอย่างเดียว ไม่เขียนค่า)</p>
 
-<button id="cn">เชื่อมต่อ ESP32</button>
-<button id="run" class="g" disabled>เริ่มตรวจสอบ</button>
+<button id="cn">เชื่อมต่อ USB (FTDI)</button>
 <div id="st">ยังไม่ได้เชื่อมต่อ</div>
 
-<div class="card" id="info" style="display:none"></div>
-<div class="card" id="sum"></div>
-<div class="card" id="list"></div>
+<div class="card">
+  <div class="two">
+    <div><label>ลง (ms)</label><input id="wl" type="number" value="70"></div>
+    <div><label>ขึ้น (ms)</label><input id="wh" type="number" value="120"></div>
+  </div>
+  <label>ข้อความเริ่มต้น (hex ไม่ต้องใส่เช็คซัม)</label>
+  <input id="ib" value="FE 04 FF FF">
+  <label>ตารางที่จะอ่าน (hex คั่นด้วยเว้นวรรค)</label>
+  <input id="tb" value="00 17 20 67 70 D0 D1">
+</div>
 
-<p class="note">ต้องอัปโหลดไฟล์ <b>esp32_selftest.ino</b> ลงบอร์ดก่อน และเปิดหน้านี้ด้วย Chrome (Android / คอมพิวเตอร์) เพราะ iPhone/Safari ไม่รองรับ Web Bluetooth ขา GPIO ที่ต่ออุปกรณ์อยู่อาจแสดงว่า “ผิดปกติ” ได้ ให้ถอดสายก่อนตรวจ</p>
+<button id="init" class="g" disabled>1) เริ่มคุยกับ ECU</button>
+<button id="rd" class="g" disabled>2) อ่านตารางทั้งหมด</button>
+<button id="lv" class="g" disabled>3) ติดตามสด (ตารางแรกในช่อง)</button>
+
+<div class="card" id="res"><span class="note">ผลจะแสดงตรงนี้</span></div>
+<div class="card t" id="log"></div>
+<button id="cp" class="g">คัดลอกล็อก</button>
+
+<p class="note">ใช้ Chrome บน Android และต้องเปิดผ่าน https (เช่น github.io) ปิดแอปอื่นที่ใช้ตัวแปลงตัวนี้ก่อน ผลที่ได้เป็นค่าดิบ (hex) โดยลำดับเริ่มต้นและรูปแบบคำสั่งอ้างอิงโปรโตคอล Honda K-line ทั่วไป ถ้า ECU ไม่ตอบให้ปรับค่าในช่องด้านบน ถ้าขึ้นว่า “ไม่มี echo” แปลว่าปัญหาอยู่ที่สาย/ตัวแปลง K-line ไม่ใช่ที่ ECU</p>
 
 <script>
-const SVC='6e400001-b5a3-f393-e0a9-e50e24dcca9e',RXU='6e400002-b5a3-f393-e0a9-e50e24dcca9e',TXU='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
-const NAMES={ble:'บลูทูธ',flash:'หน่วยความจำแฟลช',nvs:'เขียน/อ่านแฟลช (NVS)',ram:'แรม (RAM)',cpu:'ซีพียู (CPU)',temp:'เซนเซอร์อุณหภูมิ',wifi:'วิทยุ Wi‑Fi',gpio:'ขา GPIO',kline:'K-line (GPIO16/17)'};
 const $=id=>document.getElementById(id);
-const dec=new TextDecoder(),enc=new TextEncoder();
-let dev,rx,buf='';
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+let dev,epIn,epOut,rx=[],open=false,live=false;
 
-function render(){
-  $('list').innerHTML=Object.entries(NAMES).map(([k,v])=>
-   `<div class="row" id="r-${k}"><span class="dot"></span><span class="n">${v}<span class="d" id="d-${k}"></span></span><span class="t" id="t-${k}">รอ</span></div>`).join('');
-  $('sum').style.display='none';
+const hx=a=>Array.from(a,b=>b.toString(16).padStart(2,'0')).join(' ').toUpperCase();
+const parse=s=>(s.match(/[0-9a-fA-F]{1,2}/g)||[]).map(h=>parseInt(h,16));
+const cks=a=>(0x100-(a.reduce((x,y)=>x+y,0)&0xFF))&0xFF;
+function log(m,c){const l=$('log');const d=document.createElement('div');d.className=c||'';d.textContent=m;l.appendChild(d);l.scrollTop=l.scrollHeight;}
+
+async function ctl(req,val,idx=0){
+  const r=await dev.controlTransferOut({requestType:'vendor',recipient:'device',request:req,value:val,index:idx});
+  if(r.status!=='ok')throw new Error('control '+req+' '+r.status);
 }
-function setRes(k,ok,detail){
-  const r=$('r-'+k);if(!r)return;
-  r.className='row '+(ok?'ok':'fail');
-  $('t-'+k).textContent=ok?'ผ่าน':'พัง';
-  $('d-'+k).textContent=detail||'';
+function ftdiBaud(b){
+  const d=Math.round(3000000*8/b),ip=d>>3,fc=[0,3,2,4,1,5,6,7][d&7];
+  return [(ip&0xFFFF)|((fc&3)<<14),(fc>>2)&1];
 }
-function finish(){
-  const f=[...document.querySelectorAll('.row.fail .n')].map(e=>e.firstChild.textContent);
-  const s=$('sum');s.style.display='block';
-  if(f.length){s.className='card fail';s.id='sum';s.textContent='พบปัญหา '+f.length+' รายการ: '+f.join(', ');}
-  else{s.className='card ok';s.textContent='✓ ทุกส่วนทำงานปกติ';}
-  $('run').disabled=false;$('st').textContent='ตรวจเสร็จแล้ว';
+async function readLoop(){
+  const ps=epIn.packetSize||64;
+  while(open){
+    try{
+      const r=await dev.transferIn(epIn.endpointNumber,ps);
+      const d=new Uint8Array(r.data.buffer,r.data.byteOffset,r.data.byteLength);
+      for(let i=0;i<d.length;i+=ps){const c=d.subarray(i,Math.min(i+ps,d.length));for(let j=2;j<c.length;j++)rx.push(c[j]);}
+    }catch(e){if(!open)break;await sleep(50);}
+  }
 }
-function handle(line){
-  line=line.trim();if(!line)return;
-  if(line==='DONE')return finish();
-  const [k,res,detail]=line.split('|');
-  if(k==='info'){const i=$('info');i.style.display='block';i.textContent='ชิป: '+detail;return;}
-  setRes(k,res==='OK',detail);
+async function txrx(frame,maxWait=400){
+  rx.length=0;
+  await dev.transferOut(epOut.endpointNumber,new Uint8Array(frame));
+  log('TX '+hx(frame),'tx');
+  let t=performance.now();
+  while(rx.length<frame.length&&performance.now()-t<250)await sleep(2);
+  const echoOk=frame.every((b,i)=>rx[i]===b);
+  if(echoOk)rx.splice(0,frame.length);
+  else log(rx.length?'echo ไม่ตรงกับที่ส่ง':'ไม่มี echo (ตรวจสาย/ตัวแปลง K-line)','er');
+  let last=rx.length,tl=performance.now();t=performance.now();
+  while(performance.now()-t<maxWait){
+    await sleep(5);
+    if(rx.length!==last){last=rx.length;tl=performance.now();}
+    else if(rx.length>0&&performance.now()-tl>40)break;
+  }
+  const resp=rx.splice(0);
+  log(resp.length?'RX '+hx(resp):'RX (ไม่ตอบ)',resp.length?'rx':'er');
+  return resp;
 }
-function onDis(){
-  $('st').textContent='การเชื่อมต่อหลุด';$('run').disabled=true;$('cn').textContent='เชื่อมต่อใหม่';
-  if(!document.querySelector('.row.ok,.row.fail')) return;
-  setRes('ble',false,'การเชื่อมต่อขาดระหว่างตรวจ');
-}
+
 $('cn').onclick=async()=>{
-  if(!navigator.bluetooth){$('st').textContent='เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth (ใช้ Chrome)';return;}
+  if(!navigator.usb){$('st').textContent='เบราว์เซอร์นี้ไม่รองรับ WebUSB (ใช้ Chrome บน Android)';return;}
   try{
-    $('st').textContent='กำลังค้นหา...';
-    dev=await navigator.bluetooth.requestDevice({filters:[{services:[SVC]}]});
-    dev.addEventListener('gattserverdisconnected',onDis);
-    const sv=await (await dev.gatt.connect()).getPrimaryService(SVC);
-    rx=await sv.getCharacteristic(RXU);
-    const tx=await sv.getCharacteristic(TXU);
-    await tx.startNotifications();
-    buf='';
-    tx.addEventListener('characteristicvaluechanged',e=>{
-      buf+=dec.decode(e.target.value);let i;
-      while((i=buf.indexOf('\n'))>=0){handle(buf.slice(0,i));buf=buf.slice(i+1);}
-    });
-    $('st').textContent='เชื่อมต่อแล้ว: '+(dev.name||'ESP32');
-    $('cn').textContent='เชื่อมต่ออุปกรณ์อื่น';$('run').disabled=false;
-    render();setRes('ble',true,'เชื่อมต่อสำเร็จ');
+    dev=await navigator.usb.requestDevice({filters:[{vendorId:0x0403}]});
+    await dev.open();
+    if(!dev.configuration)await dev.selectConfiguration(1);
+    const itf=dev.configuration.interfaces[0];
+    await dev.claimInterface(itf.interfaceNumber);
+    const eps=itf.alternates[0].endpoints;
+    epIn=eps.find(e=>e.direction==='in');epOut=eps.find(e=>e.direction==='out');
+    await ctl(0,0);
+    const [v,i]=ftdiBaud(10400);
+    await ctl(3,v,i);
+    await ctl(4,0x0008);
+    await ctl(2,0,0);
+    await ctl(9,1);
+    await ctl(0,1);await ctl(0,2);
+    open=true;readLoop();
+    $('st').textContent='เชื่อมต่อแล้ว: '+(dev.productName||'FTDI')+' (10400 8N1)';
+    $('init').disabled=false;$('rd').disabled=false;$('lv').disabled=false;
+    log('เชื่อมต่อ USB สำเร็จ');
   }catch(e){$('st').textContent='เชื่อมต่อไม่สำเร็จ: '+(e.message||e);}
 };
-$('run').onclick=async()=>{
-  render();setRes('ble',true,'เชื่อมต่อสำเร็จ');
-  $('run').disabled=true;$('st').textContent='กำลังตรวจสอบ...';
-  try{await rx.writeValue(enc.encode('T'));}
-  catch(e){$('st').textContent='ส่งคำสั่งไม่สำเร็จ';$('run').disabled=false;}
+
+$('init').onclick=async()=>{
+  $('init').disabled=true;
+  try{
+    log('ส่งพัลส์ปลุก...');
+    await ctl(4,0x4008);await sleep(+$('wl').value||70);
+    await ctl(4,0x0008);await sleep(+$('wh').value||120);
+    rx.length=0;
+    const ib=parse($('ib').value);
+    await txrx(ib);
+  }catch(e){log('ผิดพลาด: '+(e.message||e),'er');}
+  $('init').disabled=false;
 };
-render();
+
+async function readTable(t){
+  const f=[0x72,0x05,0x71,t];f.push(cks(f));
+  return txrx(f,300);
+}
+function show(map){
+  $('res').innerHTML=Object.entries(map).map(([t,r])=>
+    `<div class="t"><b>ตาราง 0x${(+t).toString(16).toUpperCase().padStart(2,'0')}</b><br>${r.length?hx(r):'ไม่ตอบ'}</div>`).join('<hr style="border:0;border-top:1px solid var(--bd)">');
+}
+$('rd').onclick=async()=>{
+  $('rd').disabled=true;$('lv').disabled=true;
+  const m={};
+  try{for(const t of parse($('tb').value)){m[t]=await readTable(t);show(m);await sleep(30);}}
+  catch(e){log('ผิดพลาด: '+(e.message||e),'er');}
+  $('rd').disabled=false;$('lv').disabled=false;
+};
+$('lv').onclick=async()=>{
+  if(live){live=false;return;}
+  live=true;$('lv').textContent='หยุดติดตาม';$('rd').disabled=true;
+  const t=parse($('tb').value)[0];
+  try{while(live){const r=await readTable(t);show({[t]:r});await sleep(200);}}
+  catch(e){log('ผิดพลาด: '+(e.message||e),'er');}
+  live=false;$('lv').textContent='3) ติดตามสด (ตารางแรกในช่อง)';$('rd').disabled=false;
+};
+$('cp').onclick=async()=>{
+  try{await navigator.clipboard.writeText($('log').innerText);$('cp').textContent='คัดลอกแล้ว';setTimeout(()=>$('cp').textContent='คัดลอกล็อก',1500);}catch(e){}
+};
+navigator.usb&&navigator.usb.addEventListener('disconnect',()=>{open=false;$('st').textContent='ถอดสาย USB แล้ว';$('init').disabled=$('rd').disabled=$('lv').disabled=true;});
 </script>
 </body>
 </html>

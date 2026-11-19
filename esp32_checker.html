@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ตัวเช็ค ESP32 ผ่านบลูทูธ</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#14181f;--mut:#667085;--bd:#e3e6eb;--ok:#12a150;--bad:#d92d20;--pen:#98a2b3;--ac:#2563eb;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1218;--card:#181c24;--tx:#eef1f6;--mut:#98a2b3;--bd:#2a303b;--ok:#32d583;--bad:#f97066;--pen:#667085;--ac:#5b8cff}}
+:root[data-theme="dark"]{--bg:#0f1218;--card:#181c24;--tx:#eef1f6;--mut:#98a2b3;--bd:#2a303b;--ok:#32d583;--bad:#f97066;--pen:#667085;--ac:#5b8cff}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,"Noto Sans Thai",sans-serif;padding:16px;max-width:520px;margin-inline:auto}
+h1{font-size:20px;margin:8px 0 4px}
+p.s{color:var(--mut);font-size:14px;margin:0 0 14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:12px}
+button{font:inherit;font-weight:600;border:0;border-radius:12px;padding:13px;width:100%;background:var(--ac);color:#fff;margin-bottom:8px}
+button:disabled{opacity:.45}
+button.g{background:transparent;color:var(--ac);border:1px solid var(--bd)}
+.row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bd)}
+.row:last-child{border:0}
+.dot{width:12px;height:12px;border-radius:50%;background:var(--pen);flex:none}
+.row.ok .dot{background:var(--ok)}.row.fail .dot{background:var(--bad)}
+.row .n{flex:1;font-size:15px}.row .d{font-size:12px;color:var(--mut);display:block}
+.row .t{font-size:13px;font-weight:600;color:var(--pen)}
+.row.ok .t{color:var(--ok)}.row.fail .t{color:var(--bad)}
+#sum{font-weight:700;text-align:center;display:none}
+#sum.ok{color:var(--ok)}#sum.fail{color:var(--bad)}
+#st{font-size:13px;color:var(--mut);text-align:center;margin:6px 0}
+.note{font-size:12px;color:var(--mut);line-height:1.5}
+</style>
+</head>
+<body>
+<h1>ตัวเช็ค ESP32</h1>
+<p class="s">ตรวจว่าบอร์ดพังไหม พังตรงส่วนไหน ผ่านบลูทูธ</p>
+
+<button id="cn">เชื่อมต่อ ESP32</button>
+<button id="run" class="g" disabled>เริ่มตรวจสอบ</button>
+<div id="st">ยังไม่ได้เชื่อมต่อ</div>
+
+<div class="card" id="info" style="display:none"></div>
+<div class="card" id="sum"></div>
+<div class="card" id="list"></div>
+
+<p class="note">ต้องอัปโหลดไฟล์ <b>esp32_selftest.ino</b> ลงบอร์ดก่อน และเปิดหน้านี้ด้วย Chrome (Android / คอมพิวเตอร์) เพราะ iPhone/Safari ไม่รองรับ Web Bluetooth ขา GPIO ที่ต่ออุปกรณ์อยู่อาจแสดงว่า “ผิดปกติ” ได้ ให้ถอดสายก่อนตรวจ</p>
+
+<script>
+const SVC='6e400001-b5a3-f393-e0a9-e50e24dcca9e',RXU='6e400002-b5a3-f393-e0a9-e50e24dcca9e',TXU='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+const NAMES={ble:'บลูทูธ',flash:'หน่วยความจำแฟลช',nvs:'เขียน/อ่านแฟลช (NVS)',ram:'แรม (RAM)',cpu:'ซีพียู (CPU)',temp:'เซนเซอร์อุณหภูมิ',wifi:'วิทยุ Wi‑Fi',gpio:'ขา GPIO'};
+const $=id=>document.getElementById(id);
+const dec=new TextDecoder(),enc=new TextEncoder();
+let dev,rx,buf='';
+
+function render(){
+  $('list').innerHTML=Object.entries(NAMES).map(([k,v])=>
+   `<div class="row" id="r-${k}"><span class="dot"></span><span class="n">${v}<span class="d" id="d-${k}"></span></span><span class="t" id="t-${k}">รอ</span></div>`).join('');
+  $('sum').style.display='none';
+}
+function setRes(k,ok,detail){
+  const r=$('r-'+k);if(!r)return;
+  r.className='row '+(ok?'ok':'fail');
+  $('t-'+k).textContent=ok?'ผ่าน':'พัง';
+  $('d-'+k).textContent=detail||'';
+}
+function finish(){
+  const f=[...document.querySelectorAll('.row.fail .n')].map(e=>e.firstChild.textContent);
+  const s=$('sum');s.style.display='block';
+  if(f.length){s.className='card fail';s.id='sum';s.textContent='พบปัญหา '+f.length+' รายการ: '+f.join(', ');}
+  else{s.className='card ok';s.textContent='✓ ทุกส่วนทำงานปกติ';}
+  $('run').disabled=false;$('st').textContent='ตรวจเสร็จแล้ว';
+}
+function handle(line){
+  line=line.trim();if(!line)return;
+  if(line==='DONE')return finish();
+  const [k,res,detail]=line.split('|');
+  if(k==='info'){const i=$('info');i.style.display='block';i.textContent='ชิป: '+detail;return;}
+  setRes(k,res==='OK',detail);
+}
+function onDis(){
+  $('st').textContent='การเชื่อมต่อหลุด';$('run').disabled=true;$('cn').textContent='เชื่อมต่อใหม่';
+  if(!document.querySelector('.row.ok,.row.fail')) return;
+  setRes('ble',false,'การเชื่อมต่อขาดระหว่างตรวจ');
+}
+$('cn').onclick=async()=>{
+  if(!navigator.bluetooth){$('st').textContent='เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth (ใช้ Chrome)';return;}
+  try{
+    $('st').textContent='กำลังค้นหา...';
+    dev=await navigator.bluetooth.requestDevice({filters:[{services:[SVC]}]});
+    dev.addEventListener('gattserverdisconnected',onDis);
+    const sv=await (await dev.gatt.connect()).getPrimaryService(SVC);
+    rx=await sv.getCharacteristic(RXU);
+    const tx=await sv.getCharacteristic(TXU);
+    await tx.startNotifications();
+    buf='';
+    tx.addEventListener('characteristicvaluechanged',e=>{
+      buf+=dec.decode(e.target.value);let i;
+      while((i=buf.indexOf('\n'))>=0){handle(buf.slice(0,i));buf=buf.slice(i+1);}
+    });
+    $('st').textContent='เชื่อมต่อแล้ว: '+(dev.name||'ESP32');
+    $('cn').textContent='เชื่อมต่ออุปกรณ์อื่น';$('run').disabled=false;
+    render();setRes('ble',true,'เชื่อมต่อสำเร็จ');
+  }catch(e){$('st').textContent='เชื่อมต่อไม่สำเร็จ: '+(e.message||e);}
+};
+$('run').onclick=async()=>{
+  render();setRes('ble',true,'เชื่อมต่อสำเร็จ');
+  $('run').disabled=true;$('st').textContent='กำลังตรวจสอบ...';
+  try{await rx.writeValue(enc.encode('T'));}
+  catch(e){$('st').textContent='ส่งคำสั่งไม่สำเร็จ';$('run').disabled=false;}
+};
+render();
+</script>
+</body>
+</html>
